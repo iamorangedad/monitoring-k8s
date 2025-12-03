@@ -51,7 +51,125 @@ data:
           regex: (.+)
           target_label: __metrics_path__
           replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+      
+      # [新增] 监控 Jetson GPU/功耗/温度 (JTOP)
+      - job_name: 'jetson-jtop'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app]
+          regex: jetson-exporter
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: metrics
+          action: keep
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-html
+  namespace: monitoring
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Edge Cluster Monitoring Center</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 20px;
+            }
+            .container { max-width: 1200px; margin: 0 auto; }
+            h1 {
+                text-align: center; color: white; margin-bottom: 40px;
+                font-size: 2.5em; text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            }
+            .grid {
+                display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+            }
+            .card {
+                background: white; border-radius: 15px; padding: 25px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+                transition: transform 0.3s, box-shadow 0.3s;
+                display: flex; flex-direction: column;
+            }
+            .card:hover { transform: translateY(-5px); box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3); }
+            .card h2 { color: #667eea; margin-bottom: 10px; font-size: 1.5em; display: flex; align-items: center; justify-content: space-between; }
+            .card p { color: #666; margin-bottom: 15px; line-height: 1.6; flex-grow: 1; }
+            .card a {
+                display: inline-block; text-align: center;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white; padding: 10px 20px; border-radius: 8px;
+                text-decoration: none; font-weight: 600; transition: opacity 0.3s;
+            }
+            .card a:hover { opacity: 0.9; }
+            .port {
+                display: inline-block; background: #f0f0f0; padding: 3px 8px;
+                border-radius: 4px; font-size: 0.6em; color: #666; vertical-align: middle;
+            }
+            .tag {
+                font-size: 0.5em; padding: 2px 6px; border-radius: 4px; color: white; vertical-align: middle; margin-left: 5px;
+            }
+            .tag-pi { background-color: #c51a4a; }
+            .tag-jetson { background-color: #76b900; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🌌 Edge Cluster Monitoring Center</h1>
+            <div class="grid">
+                <div class="card">
+                    <h2>📊 Grafana</h2>
+                    <p>Data visualization platform, dashboards for all nodes.<span class="port">:30300</span></p>
+                    <p><strong>User:</strong> admin / admin</p>
+                    <a href="#" onclick="visit(30300)">Open Grafana</a>
+                </div>
 
+                <div class="card">
+                    <h2>📈 Prometheus</h2>
+                    <p>Time-series database and collector.<span class="port">:30090</span></p>
+                    <a href="#" onclick="visit(30090)">Open Prometheus</a>
+                </div>
+
+                <div class="card">
+                    <h2>🐳 Portainer</h2>
+                    <p>Kubernetes cluster management UI.<span class="port">:30009</span></p>
+                    <a href="#" onclick="visit(30009)">Open Portainer</a>
+                </div>
+
+                <div class="card">
+                    <h2>🚀 Jetson Stats <span class="tag tag-jetson">Orin Nano</span></h2>
+                    <p>NVIDIA GPU, Power, Fan & Thermal metrics.<span class="port">:9800</span></p>
+                    <p style="font-size: 0.9em; color: #888">Raw Metrics endpoint</p>
+                    <a href="#" onclick="visit(9800, '/metrics')">View JTOP Metrics</a>
+                </div>
+
+                <div class="card">
+                    <h2>🖥️ Node Exporter <span class="tag tag-pi">All Nodes</span></h2>
+                    <p>Standard Linux hardware metrics (CPU/Mem/Disk).<span class="port">:9100</span></p>
+                    <a href="#" onclick="visit(9100, '/metrics')">View Raw Metrics</a>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // 自动使用当前浏览器地址栏的 IP
+            function visit(port, path = '') {
+                const host = window.location.hostname;
+                const protocol = window.location.protocol;
+                const url = `${protocol}//${host}:${port}${path}`;
+                window.open(url, '_blank');
+            }
+        </script>
+    </body>
+    </html>
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -64,7 +182,7 @@ data:
         listen 80;
         location / {
             root /usr/share/nginx/html;
-            index index.html;
+            index index.html index.htm;
         }
     }
 
@@ -353,7 +471,64 @@ spec:
 
 ---
 # ==========================================
-# 7. Nginx (Web 应用)
+# 7. Jetson JTOP Exporter (Jetson专用)
+# ==========================================
+# 该容器读取宿主机的 jtop.sock 并转化为 Prometheus 格式
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: jetson-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: jetson-exporter
+  template:
+    metadata:
+      labels:
+        app: jetson-exporter
+    spec:
+      # 关键：只调度到打了标签 hardware=jetson 的节点上
+      nodeSelector:
+        hardware: jetson
+      containers:
+      - name: jetson-exporter
+        # 这是一个社区维护的将 jtop 转化为 metrics 的镜像
+        image: zaninime/prometheus-jetson-exporter:latest
+        securityContext:
+          privileged: true
+        ports:
+        - containerPort: 9800
+          name: metrics
+        volumeMounts:
+        # 挂载宿主机的 jtop socket
+        - name: jtop-socket
+          mountPath: /run/jtop.sock
+          readOnly: true
+      volumes:
+      - name: jtop-socket
+        hostPath:
+          path: /run/jtop.sock
+          type: Socket
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jetson-exporter
+  namespace: monitoring
+  labels:
+    app: jetson-exporter
+spec:
+  clusterIP: None
+  ports:
+  - port: 9800
+    name: metrics
+  selector:
+    app: jetson-exporter
+
+---
+# ==========================================
+# 8. Nginx (Web 应用)
 # ==========================================
 apiVersion: apps/v1
 kind: Deployment
@@ -375,11 +550,21 @@ spec:
         image: nginx:alpine
         ports:
         - containerPort: 80
+        resources:
+          limits:
+            memory: 64Mi
         volumeMounts:
-        - name: config
-          mountPath: /etc/nginx/conf.d
+        - name: html-volume
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        - name: config-volume
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
       volumes:
-      - name: config
+      - name: html-volume
+        configMap:
+          name: nginx-html
+      - name: config-volume
         configMap:
           name: nginx-config
 ---
