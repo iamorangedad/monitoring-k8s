@@ -1,0 +1,398 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+
+---
+# ==========================================
+# 1. 配置管理 (ConfigMaps)
+# ==========================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      # 监控所有节点的 Node Exporter
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app]
+          regex: node-exporter
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: metrics
+          action: keep
+
+      # 监控 Kubelet (替代 cAdvisor)
+      # 注意：在 K3s 中可能需要根据具体安全配置调整 token 或 scheme
+      - job_name: 'kubernetes-nodes-cadvisor'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: monitoring
+data:
+  default.conf: |
+    server {
+        listen 80;
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+
+---
+# ==========================================
+# 2. Portainer (K8s 管理面板)
+# ==========================================
+# Portainer 在 K8s 中需要 RBAC 权限才能管理集群
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portainer-sa
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: portainer-rb
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: portainer-sa
+  namespace: monitoring
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portainer
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portainer
+  template:
+    metadata:
+      labels:
+        app: portainer
+    spec:
+      serviceAccountName: portainer-sa
+      containers:
+      - name: portainer
+        # 注意：这里必须使用 Portainer CE 版，原 Docker 版不包含 K8s 支持
+        image: portainer/portainer-ce:latest
+        ports:
+        - containerPort: 9000
+        - containerPort: 9443
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        emptyDir: {} # 生产环境请改为 PVC
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portainer
+  namespace: monitoring
+spec:
+  type: NodePort
+  ports:
+  - port: 9000
+    targetPort: 9000
+    nodePort: 30009 # 访问端口: 30009
+    name: http
+  - port: 9443
+    targetPort: 9443
+    nodePort: 30943
+    name: https
+  selector:
+    app: portainer
+
+---
+# ==========================================
+# 3. Prometheus (监控核心)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: portainer-sa # 复用权限以便通过 SD 发现节点
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+          - "--config.file=/etc/prometheus/prometheus.yml"
+          - "--storage.tsdb.path=/prometheus"
+          - "--storage.tsdb.retention.time=15d"
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml
+        - name: data
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  type: NodePort
+  ports:
+  - port: 9090
+    targetPort: 9090
+    nodePort: 30090 # 访问端口: 30090
+  selector:
+    app: prometheus
+
+---
+# ==========================================
+# 4. Grafana (可视化)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          value: "admin"
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "admin"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/grafana
+      volumes:
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  type: NodePort
+  ports:
+  - port: 3000
+    targetPort: 3000
+    nodePort: 30300 # 访问端口: 30300
+  selector:
+    app: grafana
+
+---
+# ==========================================
+# 5. Node Exporter (DaemonSet - 每台机器跑一个)
+# ==========================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:latest
+        args:
+          - "--path.rootfs=/host"
+        ports:
+        - containerPort: 9100
+          name: metrics
+        volumeMounts:
+        - name: root
+          mountPath: /host
+          readOnly: true
+      volumes:
+      - name: root
+        hostPath:
+          path: /
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+  namespace: monitoring
+  labels:
+    app: node-exporter
+spec:
+  clusterIP: None
+  ports:
+  - port: 9100
+    name: metrics
+  selector:
+    app: node-exporter
+
+---
+# ==========================================
+# 6. RPi Temp Exporter (DaemonSet)
+# ==========================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rpi-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: rpi-exporter
+  template:
+    metadata:
+      labels:
+        app: rpi-exporter
+    spec:
+      containers:
+      - name: rpi-exporter
+        image: carlosedp/arm_exporter:latest
+        securityContext:
+          privileged: true
+        ports:
+        - containerPort: 9243
+        volumeMounts:
+        - name: sys
+          mountPath: /sys
+          readOnly: true
+        - name: hostname
+          mountPath: /etc/nodename
+          readOnly: true
+      volumes:
+      - name: sys
+        hostPath:
+          path: /sys
+      - name: hostname
+        hostPath:
+          path: /etc/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpi-exporter
+  namespace: monitoring
+spec:
+  clusterIP: None
+  ports:
+  - port: 9243
+  selector:
+    app: rpi-exporter
+
+---
+# ==========================================
+# 7. Nginx (Web 应用)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d
+      volumes:
+      - name: config
+        configMap:
+          name: nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: monitoring
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080 # 访问端口: 30080
+  selector:
+    app: nginx
