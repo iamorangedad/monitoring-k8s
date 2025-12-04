@@ -489,19 +489,19 @@ spec:
         app: jetson-exporter
     spec:
       # 关键：只调度到打了标签 hardware=jetson 的节点上
+      hostNetwork: true
       nodeSelector:
         hardware: jetson
       containers:
       - name: jetson-exporter
-        # 这是一个社区维护的将 jtop 转化为 metrics 的镜像
-        image: zaninime/prometheus-jetson-exporter:latest
+        image: local/jetson-exporter:v1
+        imagePullPolicy: Never
         securityContext:
           privileged: true
         ports:
         - containerPort: 9800
           name: metrics
         volumeMounts:
-        # 挂载宿主机的 jtop socket
         - name: jtop-socket
           mountPath: /run/jtop.sock
           readOnly: true
