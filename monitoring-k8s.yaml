@@ -155,14 +155,7 @@ data:
                     <h2>🖥️ Node Exporter <span class="tag tag-pi">All Nodes</span></h2>
                     <p>Standard Linux hardware metrics (CPU/Mem/Disk).<span class="port">:9100</span></p>
                     <a href="#" onclick="visit(9100, '/metrics')">View Raw Metrics</a>
-                </div>
-                
-                <div class="card">
-                    <h2>🌡️ ARM Temp <span class="tag tag-pi">ARM Edge Device</span></h2>
-                    <p>CPU & GPU Temperature metrics for ARM Edge Device.</p>
-                    <p style="font-size: 0.9em; color: #888">Port: 9243</p>
-                    <a href="#" onclick="visit(9243, '/metrics')">View Temperature</a>
-                </div>
+                </div>              
 
             </div>
         </div>
@@ -426,58 +419,7 @@ spec:
     app: node-exporter
 
 ---
-# ==========================================
-# 6. arm Temp Exporter (DaemonSet)
-# ==========================================
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: arm-exporter
-  namespace: monitoring
-spec:
-  selector:
-    matchLabels:
-      app: arm-exporter
-  template:
-    metadata:
-      labels:
-        app: arm-exporter
-    spec:
-      containers:
-      - name: arm-exporter
-        image: carlosedp/arm_exporter:latest
-        securityContext:
-          privileged: true
-        ports:
-        - containerPort: 9243
-        volumeMounts:
-        - name: sys
-          mountPath: /sys
-          readOnly: true
-        - name: hostname
-          mountPath: /etc/nodename
-          readOnly: true
-      volumes:
-      - name: sys
-        hostPath:
-          path: /sys
-      - name: hostname
-        hostPath:
-          path: /etc/hostname
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: arm-exporter
-  namespace: monitoring
-spec:
-  clusterIP: None
-  ports:
-  - port: 9243
-  selector:
-    app: arm-exporter
 
----
 # ==========================================
 # 7. Jetson JTOP Exporter (Jetson专用)
 # ==========================================
