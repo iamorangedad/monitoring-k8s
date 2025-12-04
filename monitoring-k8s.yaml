@@ -156,6 +156,14 @@ data:
                     <p>Standard Linux hardware metrics (CPU/Mem/Disk).<span class="port">:9100</span></p>
                     <a href="#" onclick="visit(9100, '/metrics')">View Raw Metrics</a>
                 </div>
+                
+                <div class="card">
+                    <h2>🌡️ ARM Temp <span class="tag tag-pi">ARM Edge Device</span></h2>
+                    <p>CPU & GPU Temperature metrics for ARM Edge Device.</p>
+                    <p style="font-size: 0.9em; color: #888">Port: 9243</p>
+                    <a href="#" onclick="visit(9243, '/metrics')">View Temperature</a>
+                </div>
+
             </div>
         </div>
 
@@ -419,24 +427,24 @@ spec:
 
 ---
 # ==========================================
-# 6. RPi Temp Exporter (DaemonSet)
+# 6. arm Temp Exporter (DaemonSet)
 # ==========================================
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: rpi-exporter
+  name: arm-exporter
   namespace: monitoring
 spec:
   selector:
     matchLabels:
-      app: rpi-exporter
+      app: arm-exporter
   template:
     metadata:
       labels:
-        app: rpi-exporter
+        app: arm-exporter
     spec:
       containers:
-      - name: rpi-exporter
+      - name: arm-exporter
         image: carlosedp/arm_exporter:latest
         securityContext:
           privileged: true
@@ -460,14 +468,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: rpi-exporter
+  name: arm-exporter
   namespace: monitoring
 spec:
   clusterIP: None
   ports:
   - port: 9243
   selector:
-    app: rpi-exporter
+    app: arm-exporter
 
 ---
 # ==========================================
