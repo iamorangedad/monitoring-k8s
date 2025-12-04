@@ -143,7 +143,35 @@ The cluster uses **NodePort** services, making them accessible via **ANY node's 
 
   * **Cause**: Security feature. You must create an admin account within 5 minutes of startup.
   * **Fix**: Restart the pod: `kubectl rollout restart deployment portainer -n monitoring`.
+-----
+## ⚠️ Mixed Runtime Environment & Monitoring Configuration
 
+This cluster operates in a **Hybrid Runtime Environment**, combining default K3s configurations with specialized hardware setups (NVIDIA Jetson). This introduces specific challenges for monitoring and data aggregation.
+
+### Cluster Topology
+
+| Node Name | Role | Hardware | Runtime | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **raspberrypi** | Control Plane | Raspberry Pi 5 | `containerd` | Default K3s runtime. |
+| **ubuntu** | Worker | Jetson Orin Nano | `docker` | Uses Docker Shim to support legacy Jetson GPU tools. |
+
+### 🔍 Monitoring Compatibility Notes (cAdvisor)
+
+Due to the difference in Container Runtimes (**Docker** vs. **Containerd**), `cAdvisor` reports metrics labels differently for each node.
+
+* **The Issue:**
+    * **Docker Runtime:** Historically exposes container names via the `name` label (derived from Cgroup paths).
+    * **Containerd (CRI):** Does not expose human-readable Cgroup names. The `name` label is often empty or contains a UUID.
+* **The Solution:**
+    Standard Grafana dashboards often rely on `name!=""` filters, which causes data from the Jetson node to "disappear." **We must use standard Kubernetes labels (`container` and `pod`) instead of `name`.**
+
+#### PromQL Query Adjustments
+
+When querying metrics in Prometheus or Grafana, use the following patterns to ensure data from both runtimes is captured:
+
+**❌ Avoid (Legacy Docker style):**
+```promql
+sum(rate(container_network_receive_bytes_total{name!=""}[5m])) by (name)
 -----
 
 ## 📜 License
