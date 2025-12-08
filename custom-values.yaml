@@ -1,0 +1,30 @@
+image:
+  registry: docker.io
+  repository: bitnami/minio
+  tag: latest 
+  pullPolicy: Always
+  
+auth:
+  rootUser: "admin"
+  rootPassword: "password123"
+
+nodeSelector:
+  kubernetes.io/hostname: "raspberrypi" 
+
+
+persistence:
+  enabled: true
+  existingClaim: "minio-local-claim" 
+
+
+service:
+  type: NodePort
+  nodePorts:
+    api: 30091      
+    console: 30092  
+
+resources:
+  limits:
+    memory: 1Gi
+  requests:
+    memory: 512Mi
