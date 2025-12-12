@@ -227,6 +227,7 @@ spec:
         app: portainer
     spec:
       serviceAccountName: portainer-sa
+      nodeName: raspberrypi
       containers:
       - name: portainer
         # 注意：这里必须使用 Portainer CE 版，原 Docker 版不包含 K8s 支持
@@ -280,6 +281,7 @@ spec:
         app: prometheus
     spec:
       serviceAccountName: portainer-sa # 复用权限以便通过 SD 发现节点
+      nodeName: raspberrypi
       containers:
       - name: prometheus
         image: prom/prometheus:latest
@@ -335,6 +337,7 @@ spec:
       labels:
         app: grafana
     spec:
+      nodeName: raspberrypi
       containers:
       - name: grafana
         image: grafana/grafana:latest
@@ -440,8 +443,7 @@ spec:
     spec:
       # 关键：只调度到打了标签 hardware=jetson 的节点上
       hostNetwork: true
-      nodeSelector:
-        hardware: jetson
+      nodeName: ubuntu
       containers:
       - name: jetson-exporter
         image: local/jetson-exporter:v1
@@ -495,6 +497,7 @@ spec:
       labels:
         app: nginx
     spec:
+      nodeName: raspberrypi
       containers:
       - name: nginx
         image: nginx:alpine
